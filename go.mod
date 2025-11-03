@@ -35,7 +35,7 @@ require (
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.6
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/consensys/gnark-crypto v0.19.0
+	github.com/consensys/gnark-crypto v0.19.2
 	github.com/crate-crypto/go-eth-kzg v1.4.0
 	github.com/davecgh/go-spew v1.1.1
 	github.com/deckarep/golang-set v1.8.0
@@ -96,7 +96,7 @@ require (
 	github.com/prysmaticlabs/gohashtree v0.0.4-beta
 	github.com/puzpuzpuz/xsync/v4 v4.1.0
 	github.com/quasilyte/go-ruleguard/dsl v0.3.22
-	github.com/quic-go/quic-go v0.48.2
+	github.com/quic-go/quic-go v0.49.1
 	github.com/rs/cors v1.11.1
 	github.com/rs/dnscache v0.0.0-20211102005908-e0241e321417
 	github.com/shirou/gopsutil/v4 v4.24.8
