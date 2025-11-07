@@ -355,8 +355,8 @@ var CheckpointSyncEndpoints = map[NetworkType][]string{
 		"https://checkpointz.pietjepuk.net/eth/v2/debug/beacon/states/finalized",
 	},
 	chainspec.SepoliaChainID: {
-		//"https://beaconstate-sepolia.chainsafe.io/eth/v2/debug/beacon/states/finalized",
-		//"https://sepolia.beaconstate.info/eth/v2/debug/beacon/states/finalized",
+		"https://beaconstate-sepolia.chainsafe.io/eth/v2/debug/beacon/states/finalized",
+		"https://sepolia.beaconstate.info/eth/v2/debug/beacon/states/finalized",
 		"https://checkpoint-sync.sepolia.ethpandaops.io/eth/v2/debug/beacon/states/finalized",
 	},
 	chainspec.GnosisChainID: {
