@@ -288,6 +288,7 @@ func RunCaplinService(ctx context.Context, engine execution_client.ExecutionEngi
 		IpAddr:                       config.CaplinDiscoveryAddr,
 		Port:                         int(config.CaplinDiscoveryPort),
 		TCPPort:                      uint(config.CaplinDiscoveryTCPPort),
+		HostAddress:                  config.CaplinHostAddress,
 		EnableUPnP:                   config.EnableUPnP,
 		MaxInboundTrafficPerPeer:     config.MaxInboundTrafficPerPeer,
 		MaxOutboundTrafficPerPeer:    config.MaxOutboundTrafficPerPeer,

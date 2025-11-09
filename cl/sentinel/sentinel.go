@@ -122,7 +122,19 @@ func (s *Sentinel) createLocalNode(
 	}
 	localNode := enode.NewLocalNode(db, privKey, s.logger)
 
-	ipEntry := enr.IP(ipAddr)
+	// Use external IP from HostAddress if configured (e.g., from --nat extip:)
+	// Otherwise fall back to the bind address
+	enrIP := ipAddr
+	if s.cfg.HostAddress != "" {
+		if externalIP := net.ParseIP(s.cfg.HostAddress); externalIP != nil {
+			enrIP = externalIP
+			s.logger.Info("[Sentinel] Using external IP in ENR", "ip", enrIP.String())
+		} else {
+			s.logger.Warn("[Sentinel] Invalid HostAddress, using bind address in ENR", "hostAddress", s.cfg.HostAddress, "bindAddr", ipAddr.String())
+		}
+	}
+
+	ipEntry := enr.IP(enrIP)
 	udpEntry := enr.UDP(udpPort)
 	tcpEntry := enr.TCP(tcpPort)
 
@@ -130,7 +142,7 @@ func (s *Sentinel) createLocalNode(
 	localNode.Set(udpEntry)
 	localNode.Set(tcpEntry)
 
-	localNode.SetFallbackIP(ipAddr)
+	localNode.SetFallbackIP(enrIP)
 	localNode.SetFallbackUDP(udpPort)
 	s.setupENR(localNode)
 	go s.updateENR(localNode)

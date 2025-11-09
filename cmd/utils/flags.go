@@ -1914,6 +1914,22 @@ func SetEthConfig(ctx *cli.Context, nodeConfig *nodecfg.Config, cfg *ethconfig.C
 	}
 
 	cfg.CaplinConfig.EnableUPnP = ctx.Bool(CaplinEnableUPNPlag.Name)
+	
+	// Set Caplin's external address from NAT configuration if using extip
+	// This matches the pattern used by Erigon's execution layer in p2p/server.go:setupLocalNode()
+	if nodeConfig.P2P.NAT != nil {
+		switch nodeConfig.P2P.NAT.(type) {
+		case nat.ExtIP:
+			// ExtIP doesn't block, extract the IP immediately
+			if ip, err := nodeConfig.P2P.NAT.ExternalIP(); err == nil && ip != nil {
+				cfg.CaplinConfig.CaplinHostAddress = ip.String()
+				logger.Info("[Caplin] Using external IP from NAT configuration", "ip", ip.String())
+			}
+		default:
+			// For UPnP and other NAT types, we could attempt to resolve in background,
+			// but for minimal patch we skip this to match existing behavior
+		}
+	}
 	var err error
 	cfg.CaplinConfig.MaxInboundTrafficPerPeer, err = datasize.ParseString(ctx.String(CaplinMaxInboundTrafficPerPeerFlag.Name))
 	if err != nil {

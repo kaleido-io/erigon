@@ -69,6 +69,7 @@ type CaplinConfig struct {
 	CaplinDiscoveryAddr         string
 	CaplinDiscoveryPort         uint64
 	CaplinDiscoveryTCPPort      uint64
+	CaplinHostAddress           string // External IP address for Caplin ENR (from --nat extip:)
 	SentinelAddr                string
 	SentinelPort                uint64
 	SubscribeAllTopics          bool
