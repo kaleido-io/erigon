@@ -35,7 +35,7 @@ const (
 var (
 	// activeSubscriptionsGauge tracks current active subscriptions by filter type and protocol
 	activeSubscriptionsGauge = metrics.GetOrCreateGaugeVec(
-		"rpc_subscriptions_active",
+		"subscriptions_active",
 		[]string{filterLabelName, protocolLabelName},
 		"Current number of active subscriptions",
 	)
@@ -48,16 +48,16 @@ var (
 )
 
 // getSubscriptionCounter returns a counter for subscription lifecycle events.
-// pattern: rpc_subscriptions_{event}_total{{filter="{filterType}",protocol="{protocol}"}}
+// pattern: subscriptions_{event}_total{{filter="{filterType}",protocol="{protocol}"}}
 func getSubscriptionCounter(event, filterType, protocol string) metrics.Counter {
 	return metrics.GetOrCreateCounter(
-		`rpc_subscriptions_` + event + `_total{filter="` + filterType + `",protocol="` + protocol + `"}`,
+		`subscriptions_` + event + `_total{filter="` + filterType + `",protocol="` + protocol + `"}`,
 	)
 }
 
 // getReapedCounter returns a counter for reaped (timeout-evicted) subscriptions.
 func getReapedCounter(filterType string) metrics.Counter {
 	return metrics.GetOrCreateCounter(
-		`rpc_subscriptions_reaped_total{filter="` + filterType + `"}`,
+		`subscriptions_reaped_total{filter="` + filterType + `"}`,
 	)
 }
