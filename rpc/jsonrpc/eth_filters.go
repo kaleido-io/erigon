@@ -99,48 +99,45 @@ func (api *APIImpl) GetFilterChanges(_ context.Context, index string) ([]any, er
 	if api.filters == nil {
 		return nil, rpc.ErrNotificationsUnsupported
 	}
+	stub := make([]any, 0)
 	// remove 0x
 	cutIndex := strings.TrimPrefix(index, "0x")
-	if found := api.filters.HasSubscription(rpchelper.LogsSubID(cutIndex)); !found {
+
+	// Validate the id exists for any subscription type first to distinguish "never created" from "no changes yet".
+	exists := api.filters.HasHeadsSubscription(rpchelper.HeadsSubID(cutIndex)) ||
+		api.filters.HasPendingTxsSubscription(rpchelper.PendingTxsSubID(cutIndex)) ||
+		api.filters.HasSubscription(rpchelper.LogsSubID(cutIndex))
+	if !exists {
 		return nil, rpc.ErrFilterNotFound
 	}
 
-	// Try heads subscription
-	if api.filters.HasHeadsSubscription(rpchelper.HeadsSubID(cutIndex)) {
+	// Identify the subscription type by probing each store; if none have data yet, return empty slice
+	if blocks, ok := api.filters.ReadPendingBlocks(rpchelper.HeadsSubID(cutIndex)); ok {
 		api.filters.TouchFilter(rpchelper.SubscriptionID(cutIndex), rpchelper.FilterTypeHeads)
-		blocks, _ := api.filters.ReadPendingBlocks(rpchelper.HeadsSubID(cutIndex))
-		result := make([]any, 0, len(blocks))
 		for _, v := range blocks {
-			result = append(result, v.Hash())
+			stub = append(stub, v.Hash())
 		}
-		return result, nil
+		return stub, nil
 	}
-
-	// Try pending txs subscription
-	if api.filters.HasPendingTxsSubscription(rpchelper.PendingTxsSubID(cutIndex)) {
+	if txs, ok := api.filters.ReadPendingTxs(rpchelper.PendingTxsSubID(cutIndex)); ok {
 		api.filters.TouchFilter(rpchelper.SubscriptionID(cutIndex), rpchelper.FilterTypePendingTxs)
-		txs, _ := api.filters.ReadPendingTxs(rpchelper.PendingTxsSubID(cutIndex))
-		result := make([]any, 0)
 		if len(txs) > 0 {
 			for _, txn := range txs[0] {
-				result = append(result, txn.Hash())
+				stub = append(stub, txn.Hash())
 			}
+			return stub, nil
 		}
-		return result, nil
+		return stub, nil
 	}
-
-	// Try logs subscription
-	if api.filters.HasSubscription(rpchelper.LogsSubID(cutIndex)) {
+	if logs, ok := api.filters.ReadLogs(rpchelper.LogsSubID(cutIndex)); ok {
 		api.filters.TouchFilter(rpchelper.SubscriptionID(cutIndex), rpchelper.FilterTypeLogs)
-		logs, _ := api.filters.ReadLogs(rpchelper.LogsSubID(cutIndex))
-		result := make([]any, 0, len(logs))
 		for _, v := range logs {
-			result = append(result, v)
+			stub = append(stub, v)
 		}
-		return result, nil
+		return stub, nil
 	}
 
-	return nil, rpc.ErrFilterNotFound
+	return []any{}, nil
 }
 
 // GetFilterLogs implements eth_getFilterLogs.
