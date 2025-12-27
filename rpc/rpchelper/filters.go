@@ -328,20 +328,20 @@ func (ff *Filters) evictStaleFilters(timeout time.Duration) {
 
 // TouchFilter resets the deadline for the given filter, preventing it from being evicted.
 // This should be called whenever a filter is accessed (e.g., via GetFilterChanges).
-func (ff *Filters) TouchFilter(id SubscriptionID) {
-	// Try heads subscription
-	if sub, ok := ff.headsSubs.Get(HeadsSubID(id)); ok {
-		sub.Touch()
-		return
-	}
-	// Try pending txs subscription
-	if sub, ok := ff.pendingTxsSubs.Get(PendingTxsSubID(id)); ok {
-		sub.Touch()
-		return
-	}
-	// Try logs subscription
-	if filter, ok := ff.logsSubs.logsFilters.Get(LogsSubID(id)); ok && filter.sender != nil {
-		filter.sender.Touch()
+func (ff *Filters) TouchFilter(id SubscriptionID, ft FilterType) {
+	switch ft {
+	case FilterTypeHeads:
+		if sub, ok := ff.headsSubs.Get(HeadsSubID(id)); ok {
+			sub.Touch()
+		}
+	case FilterTypePendingTxs:
+		if sub, ok := ff.pendingTxsSubs.Get(PendingTxsSubID(id)); ok {
+			sub.Touch()
+		}
+	case FilterTypeLogs:
+		if filter, ok := ff.logsSubs.logsFilters.Get(LogsSubID(id)); ok && filter.sender != nil {
+			filter.sender.Touch()
+		}
 	}
 }
 
@@ -349,48 +349,44 @@ func (ff *Filters) TouchFilter(id SubscriptionID) {
 // This should be called for HTTP polling filters. For WebSocket subscriptions, call
 // SetSubscriptionProtocol directly without enabling tracking (they won't be evicted).
 func (ff *Filters) EnableSubscriptionTracking(id SubscriptionID, ft FilterType, protocol string) {
-	// Try heads subscription
-	if sub, ok := ff.headsSubs.Get(HeadsSubID(id)); ok {
-		sub.SetProtocol(protocol)
-		sub.EnableTimeout()
-		ff.incrementMetrics(ft, protocol)
-		return
+	switch ft {
+	case FilterTypeHeads:
+		if sub, ok := ff.headsSubs.Get(HeadsSubID(id)); ok {
+			sub.SetProtocol(protocol)
+			sub.EnableTimeout()
+		}
+	case FilterTypePendingTxs:
+		if sub, ok := ff.pendingTxsSubs.Get(PendingTxsSubID(id)); ok {
+			sub.SetProtocol(protocol)
+			sub.EnableTimeout()
+		}
+	case FilterTypeLogs:
+		if filter, ok := ff.logsSubs.logsFilters.Get(LogsSubID(id)); ok && filter.sender != nil {
+			filter.sender.SetProtocol(protocol)
+			filter.sender.EnableTimeout()
+		}
 	}
-	// Try pending txs subscription
-	if sub, ok := ff.pendingTxsSubs.Get(PendingTxsSubID(id)); ok {
-		sub.SetProtocol(protocol)
-		sub.EnableTimeout()
-		ff.incrementMetrics(ft, protocol)
-		return
-	}
-	// Try logs subscription
-	if filter, ok := ff.logsSubs.logsFilters.Get(LogsSubID(id)); ok && filter.sender != nil {
-		filter.sender.SetProtocol(protocol)
-		filter.sender.EnableTimeout()
-		ff.incrementMetrics(ft, protocol)
-	}
+	ff.incrementMetrics(ft, protocol)
 }
 
 // SetSubscriptionProtocol sets the protocol for metrics tracking without enabling timeout.
 // Use this for WebSocket subscriptions that don't need eviction but need metrics.
 func (ff *Filters) SetSubscriptionProtocol(id SubscriptionID, ft FilterType, protocol string) {
-	// Try heads subscription
-	if sub, ok := ff.headsSubs.Get(HeadsSubID(id)); ok {
-		sub.SetProtocol(protocol)
-		ff.incrementMetrics(ft, protocol)
-		return
+	switch ft {
+	case FilterTypeHeads:
+		if sub, ok := ff.headsSubs.Get(HeadsSubID(id)); ok {
+			sub.SetProtocol(protocol)
+		}
+	case FilterTypePendingTxs:
+		if sub, ok := ff.pendingTxsSubs.Get(PendingTxsSubID(id)); ok {
+			sub.SetProtocol(protocol)
+		}
+	case FilterTypeLogs:
+		if filter, ok := ff.logsSubs.logsFilters.Get(LogsSubID(id)); ok && filter.sender != nil {
+			filter.sender.SetProtocol(protocol)
+		}
 	}
-	// Try pending txs subscription
-	if sub, ok := ff.pendingTxsSubs.Get(PendingTxsSubID(id)); ok {
-		sub.SetProtocol(protocol)
-		ff.incrementMetrics(ft, protocol)
-		return
-	}
-	// Try logs subscription
-	if filter, ok := ff.logsSubs.logsFilters.Get(LogsSubID(id)); ok && filter.sender != nil {
-		filter.sender.SetProtocol(protocol)
-		ff.incrementMetrics(ft, protocol)
-	}
+	ff.incrementMetrics(ft, protocol)
 }
 
 // IncrementMetrics increments subscription metrics without enabling timeout tracking.
