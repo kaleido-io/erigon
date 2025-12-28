@@ -82,7 +82,7 @@ type Filters struct {
 // It requires a context, Ethereum backend, transaction pool client, mining client, snapshot callback function,
 // and a logger for logging events.
 func New(ctx context.Context, config FiltersConfig, ethBackend ApiBackend, txPool txpoolproto.TxpoolClient, mining txpoolproto.MiningClient, onNewSnapshot func(), logger log.Logger) *Filters {
-	logger.Info("rpc filters: subscribing to Erigon events")
+	logger.Info("[rpc] [filters] subscribing to Erigon events")
 
 	ff := &Filters{
 		headsSubs:          concurrent.NewSyncMap[HeadsSubID, Sub[*types.Header]](),
@@ -100,7 +100,12 @@ func New(ctx context.Context, config FiltersConfig, ethBackend ApiBackend, txPoo
 
 	// Start the timeout loop for filter eviction if timeout is configured
 	if config.RpcSubscriptionFiltersTimeout > 0 {
+		logger.Info("[rpc] [filters] starting timeout loop for idle filter eviction",
+			"timeout", config.RpcSubscriptionFiltersTimeout,
+			"checkInterval", config.RpcSubscriptionFiltersTimeout/2)
 		go ff.timeoutLoop(ctx, config.RpcSubscriptionFiltersTimeout)
+	} else {
+		logger.Info("[rpc] [filters] timeout-based filter eviction disabled")
 	}
 
 	go func() {
@@ -127,7 +132,7 @@ func New(ctx context.Context, config FiltersConfig, ethBackend ApiBackend, txPoo
 					time.Sleep(3 * time.Second)
 					continue
 				}
-				logger.Warn("rpc filters: error subscribing to events", "err", err)
+				logger.Warn("[rpc] [filters] error subscribing to events", "err", err)
 			}
 		}
 	}()
@@ -155,7 +160,7 @@ func New(ctx context.Context, config FiltersConfig, ethBackend ApiBackend, txPoo
 					time.Sleep(3 * time.Second)
 					continue
 				}
-				logger.Warn("rpc filters: error subscribing to logs", "err", err)
+				logger.Warn("[rpc] [filters] error subscribing to logs", "err", err)
 			}
 		}
 	}()
@@ -181,7 +186,7 @@ func New(ctx context.Context, config FiltersConfig, ethBackend ApiBackend, txPoo
 						time.Sleep(3 * time.Second)
 						continue
 					}
-					logger.Warn("rpc filters: error subscribing to pending transactions", "err", err)
+					logger.Warn("[rpc] [filters] error subscribing to pending transactions", "err", err)
 				}
 			}
 		}()
@@ -207,7 +212,7 @@ func New(ctx context.Context, config FiltersConfig, ethBackend ApiBackend, txPoo
 							time.Sleep(3 * time.Second)
 							continue
 						}
-						logger.Warn("rpc filters: error subscribing to pending blocks", "err", err)
+						logger.Warn("[rpc] [filters] error subscribing to pending blocks", "err", err)
 					}
 				}
 			}()
@@ -231,7 +236,7 @@ func New(ctx context.Context, config FiltersConfig, ethBackend ApiBackend, txPoo
 							time.Sleep(3 * time.Second)
 							continue
 						}
-						logger.Warn("rpc filters: error subscribing to pending logs", "err", err)
+						logger.Warn("[rpc] [filters] error subscribing to pending logs", "err", err)
 					}
 				}
 			}()
@@ -252,14 +257,19 @@ func (ff *Filters) LastPendingBlock() *types.Block {
 // This prevents unbounded accumulation of idle filters and matches geth's behavior.
 func (ff *Filters) timeoutLoop(ctx context.Context, timeout time.Duration) {
 	// Check more frequently than the timeout to ensure timely eviction
-	ticker := time.NewTicker(timeout / 2)
+	checkInterval := timeout / 2
+	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
+
+	ff.logger.Debug("[rpc] [filters] timeout loop started", "timeout", timeout, "checkInterval", checkInterval)
 
 	for {
 		select {
 		case <-ctx.Done():
+			ff.logger.Debug("[rpc] [filters] timeout loop stopping due to context cancellation")
 			return
 		case <-ticker.C:
+			ff.logger.Trace("[rpc] [filters] running eviction check")
 			ff.evictStaleFilters(timeout)
 		}
 	}
@@ -268,10 +278,15 @@ func (ff *Filters) timeoutLoop(ctx context.Context, timeout time.Duration) {
 // evictStaleFilters removes filters that haven't been accessed within the timeout duration.
 // It iterates the existing subscription maps and checks each subscription's embedded tracking.
 func (ff *Filters) evictStaleFilters(timeout time.Duration) {
+	var headsChecked, txsChecked, logsChecked int
+	var headsEvicted, txsEvicted, logsEvicted int
+
 	// Collect expired heads filters
 	var headsToEvict []HeadsSubID
 	ff.headsSubs.Range(func(id HeadsSubID, sub Sub[*types.Header]) error {
+		headsChecked++
 		if sub.ShouldEvict(timeout) {
+			ff.logger.Trace("[rpc] [filters] heads filter marked for eviction", "id", id, "protocol", sub.Protocol())
 			headsToEvict = append(headsToEvict, id)
 		}
 		return nil
@@ -280,7 +295,8 @@ func (ff *Filters) evictStaleFilters(timeout time.Duration) {
 		if sub, ok := ff.headsSubs.Get(id); ok {
 			protocol := sub.Protocol()
 			if ff.unsubscribeHeadsInternal(id) {
-				ff.logger.Debug("rpc filters: evicted idle heads filter", "id", id)
+				headsEvicted++
+				ff.logger.Info("[rpc] [filters] evicted idle heads filter", "id", id, "protocol", protocol, "timeout", timeout)
 				ff.decrementMetrics(FilterTypeHeads, protocol)
 				getReapedCounter(string(FilterTypeHeads)).Inc()
 			}
@@ -290,7 +306,9 @@ func (ff *Filters) evictStaleFilters(timeout time.Duration) {
 	// Collect expired pending txs filters
 	var txsToEvict []PendingTxsSubID
 	ff.pendingTxsSubs.Range(func(id PendingTxsSubID, sub Sub[[]types.Transaction]) error {
+		txsChecked++
 		if sub.ShouldEvict(timeout) {
+			ff.logger.Trace("[rpc] [filters] pending txs filter marked for eviction", "id", id, "protocol", sub.Protocol())
 			txsToEvict = append(txsToEvict, id)
 		}
 		return nil
@@ -299,7 +317,8 @@ func (ff *Filters) evictStaleFilters(timeout time.Duration) {
 		if sub, ok := ff.pendingTxsSubs.Get(id); ok {
 			protocol := sub.Protocol()
 			if ff.unsubscribePendingTxsInternal(id) {
-				ff.logger.Debug("rpc filters: evicted idle pending txs filter", "id", id)
+				txsEvicted++
+				ff.logger.Info("[rpc] [filters] evicted idle pending txs filter", "id", id, "protocol", protocol, "timeout", timeout)
 				ff.decrementMetrics(FilterTypePendingTxs, protocol)
 				getReapedCounter(string(FilterTypePendingTxs)).Inc()
 			}
@@ -309,7 +328,9 @@ func (ff *Filters) evictStaleFilters(timeout time.Duration) {
 	// Collect expired logs filters
 	var logsToEvict []LogsSubID
 	ff.logsSubs.logsFilters.Range(func(id LogsSubID, filter *LogsFilter) error {
+		logsChecked++
 		if filter.sender != nil && filter.sender.ShouldEvict(timeout) {
+			ff.logger.Trace("[rpc] [filters] logs filter marked for eviction", "id", id, "protocol", filter.sender.Protocol())
 			logsToEvict = append(logsToEvict, id)
 		}
 		return nil
@@ -318,11 +339,24 @@ func (ff *Filters) evictStaleFilters(timeout time.Duration) {
 		if filter, ok := ff.logsSubs.logsFilters.Get(id); ok && filter.sender != nil {
 			protocol := filter.sender.Protocol()
 			if ff.unsubscribeLogsInternal(id) {
-				ff.logger.Debug("rpc filters: evicted idle logs filter", "id", id)
+				logsEvicted++
+				ff.logger.Info("[rpc] [filters] evicted idle logs filter", "id", id, "protocol", protocol, "timeout", timeout)
 				ff.decrementMetrics(FilterTypeLogs, protocol)
 				getReapedCounter(string(FilterTypeLogs)).Inc()
 			}
 		}
+	}
+
+	// Log summary at DEBUG level
+	totalEvicted := headsEvicted + txsEvicted + logsEvicted
+	if totalEvicted > 0 {
+		ff.logger.Debug("[rpc] [filters] eviction cycle complete",
+			"headsChecked", headsChecked, "headsEvicted", headsEvicted,
+			"txsChecked", txsChecked, "txsEvicted", txsEvicted,
+			"logsChecked", logsChecked, "logsEvicted", logsEvicted)
+	} else {
+		ff.logger.Trace("[rpc] [filters] eviction cycle complete, no stale filters",
+			"headsChecked", headsChecked, "txsChecked", txsChecked, "logsChecked", logsChecked)
 	}
 }
 
@@ -333,14 +367,17 @@ func (ff *Filters) TouchFilter(id SubscriptionID, ft FilterType) {
 	case FilterTypeHeads:
 		if sub, ok := ff.headsSubs.Get(HeadsSubID(id)); ok {
 			sub.Touch()
+			ff.logger.Trace("[rpc] [filters] touched heads filter", "id", id)
 		}
 	case FilterTypePendingTxs:
 		if sub, ok := ff.pendingTxsSubs.Get(PendingTxsSubID(id)); ok {
 			sub.Touch()
+			ff.logger.Trace("[rpc] [filters] touched pending txs filter", "id", id)
 		}
 	case FilterTypeLogs:
 		if filter, ok := ff.logsSubs.logsFilters.Get(LogsSubID(id)); ok && filter.sender != nil {
 			filter.sender.Touch()
+			ff.logger.Trace("[rpc] [filters] touched logs filter", "id", id)
 		}
 	}
 }
@@ -354,16 +391,19 @@ func (ff *Filters) EnableSubscriptionTracking(id SubscriptionID, ft FilterType, 
 		if sub, ok := ff.headsSubs.Get(HeadsSubID(id)); ok {
 			sub.SetProtocol(protocol)
 			sub.EnableTimeout()
+			ff.logger.Debug("[rpc] [filters] registered heads subscription with timeout tracking", "id", id, "protocol", protocol)
 		}
 	case FilterTypePendingTxs:
 		if sub, ok := ff.pendingTxsSubs.Get(PendingTxsSubID(id)); ok {
 			sub.SetProtocol(protocol)
 			sub.EnableTimeout()
+			ff.logger.Debug("[rpc] [filters] registered pending txs subscription with timeout tracking", "id", id, "protocol", protocol)
 		}
 	case FilterTypeLogs:
 		if filter, ok := ff.logsSubs.logsFilters.Get(LogsSubID(id)); ok && filter.sender != nil {
 			filter.sender.SetProtocol(protocol)
 			filter.sender.EnableTimeout()
+			ff.logger.Debug("[rpc] [filters] registered logs subscription with timeout tracking", "id", id, "protocol", protocol)
 		}
 	}
 	ff.incrementMetrics(ft, protocol)
@@ -376,14 +416,17 @@ func (ff *Filters) SetSubscriptionProtocol(id SubscriptionID, ft FilterType, pro
 	case FilterTypeHeads:
 		if sub, ok := ff.headsSubs.Get(HeadsSubID(id)); ok {
 			sub.SetProtocol(protocol)
+			ff.logger.Debug("[rpc] [filters] registered heads subscription (no timeout)", "id", id, "protocol", protocol)
 		}
 	case FilterTypePendingTxs:
 		if sub, ok := ff.pendingTxsSubs.Get(PendingTxsSubID(id)); ok {
 			sub.SetProtocol(protocol)
+			ff.logger.Debug("[rpc] [filters] registered pending txs subscription (no timeout)", "id", id, "protocol", protocol)
 		}
 	case FilterTypeLogs:
 		if filter, ok := ff.logsSubs.logsFilters.Get(LogsSubID(id)); ok && filter.sender != nil {
 			filter.sender.SetProtocol(protocol)
+			ff.logger.Debug("[rpc] [filters] registered logs subscription (no timeout)", "id", id, "protocol", protocol)
 		}
 	}
 	ff.incrementMetrics(ft, protocol)
@@ -549,12 +592,14 @@ func (ff *Filters) SubscribeNewHeads(size int) (<-chan *types.Header, HeadsSubID
 func (ff *Filters) UnsubscribeHeads(id HeadsSubID) bool {
 	sub, ok := ff.headsSubs.Get(id)
 	if !ok {
+		ff.logger.Debug("[rpc] [filters] unsubscribe heads filter not found", "id", id)
 		return false
 	}
 	protocol := sub.Protocol()
 	if !ff.unsubscribeHeadsInternal(id) {
 		return false
 	}
+	ff.logger.Debug("[rpc] [filters] unsubscribed heads filter", "id", id, "protocol", protocol)
 	ff.decrementMetrics(FilterTypeHeads, protocol)
 	return true
 }
@@ -627,12 +672,14 @@ func (ff *Filters) SubscribePendingTxs(size int) (<-chan []types.Transaction, Pe
 func (ff *Filters) UnsubscribePendingTxs(id PendingTxsSubID) bool {
 	sub, ok := ff.pendingTxsSubs.Get(id)
 	if !ok {
+		ff.logger.Debug("[rpc] [filters] unsubscribe pending txs filter not found", "id", id)
 		return false
 	}
 	protocol := sub.Protocol()
 	if !ff.unsubscribePendingTxsInternal(id) {
 		return false
 	}
+	ff.logger.Debug("[rpc] [filters] unsubscribed pending txs filter", "id", id, "protocol", protocol)
 	ff.decrementMetrics(FilterTypePendingTxs, protocol)
 	return true
 }
@@ -759,12 +806,17 @@ func (ff *Filters) HasPendingTxsSubscription(id PendingTxsSubID) bool {
 func (ff *Filters) UnsubscribeLogs(id LogsSubID) bool {
 	// Get protocol before unsubscribing
 	var protocol string
-	if filter, ok := ff.logsSubs.logsFilters.Get(id); ok && filter.sender != nil {
+	filter, ok := ff.logsSubs.logsFilters.Get(id)
+	if ok && filter.sender != nil {
 		protocol = filter.sender.Protocol()
+	}
+	if !ok {
+		ff.logger.Debug("[rpc] [filters] unsubscribe logs filter not found", "id", id)
 	}
 	if !ff.unsubscribeLogsInternal(id) {
 		return false
 	}
+	ff.logger.Debug("[rpc] [filters] unsubscribed logs filter", "id", id, "protocol", protocol)
 	ff.decrementMetrics(FilterTypeLogs, protocol)
 	return true
 }
