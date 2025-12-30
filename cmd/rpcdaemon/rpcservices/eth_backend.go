@@ -246,19 +246,72 @@ func (back *RemoteBackend) Subscribe(ctx context.Context, onNewEvent func(*remot
 		}
 		return err
 	}
+
+	// Process events asynchronously to prevent blocking the gRPC receive loop.
+	// Buffer size of 128 allows for burst handling without blocking.
+	const eventBufferSize = 128
+	eventCh := make(chan *remoteproto.SubscribeReply, eventBufferSize)
+
+	log.Debug("[rpc] [backend] events subscription started", "bufferSize", eventBufferSize)
+
+	// Start async processor
+	processorDone := make(chan struct{})
+	var eventsProcessed, eventsDropped uint64
+	go func() {
+		defer close(processorDone)
+		for event := range eventCh {
+			onNewEvent(event)
+			eventsProcessed++
+		}
+	}()
+
+	// Receive loop - never blocks on handler
+	var recvErr error
 	for {
 		event, err := subscription.Recv()
 		if errors.Is(err, io.EOF) {
-			log.Debug("rpcdaemon: the subscription channel was closed")
+			log.Debug("[rpc] [backend] events subscription channel closed")
 			break
 		}
 		if err != nil {
-			return err
+			recvErr = err
+			break
 		}
 
-		onNewEvent(event)
+		// Non-blocking send with overflow handling
+		select {
+		case eventCh <- event:
+		default:
+			// Buffer full - drop oldest event and retry
+			select {
+			case <-eventCh:
+				eventsDropped++
+			default:
+			}
+			select {
+			case eventCh <- event:
+			default:
+				// Still full, drop this event (very rare under extreme contention)
+				eventsDropped++
+				if eventsDropped == 1 || eventsDropped%100 == 0 {
+					log.Warn("[rpc] [backend] events buffer overflow, dropping events",
+						"dropped", eventsDropped, "bufferSize", eventBufferSize)
+				}
+			}
+		}
 	}
-	return nil
+
+	// Cleanup: close channel and wait for processor to drain
+	close(eventCh)
+	<-processorDone
+
+	log.Debug("[rpc] [backend] events subscription ended",
+		"processed", eventsProcessed, "dropped", eventsDropped)
+	if eventsDropped > 0 {
+		log.Warn("[rpc] [backend] events subscription ended with dropped events",
+			"processed", eventsProcessed, "dropped", eventsDropped)
+	}
+	return recvErr
 }
 
 func (back *RemoteBackend) SubscribeLogs(ctx context.Context, onNewLogs func(reply *remoteproto.SubscribeLogsReply), requestor *atomic.Value) error {
@@ -270,18 +323,72 @@ func (back *RemoteBackend) SubscribeLogs(ctx context.Context, onNewLogs func(rep
 		return err
 	}
 	requestor.Store(subscription.Send)
+
+	// Process logs asynchronously to prevent blocking the gRPC receive loop.
+	// Buffer size of 128 allows for burst handling without blocking.
+	const logsBufferSize = 128
+	logsCh := make(chan *remoteproto.SubscribeLogsReply, logsBufferSize)
+
+	log.Debug("[rpc] [backend] logs subscription started", "bufferSize", logsBufferSize)
+
+	// Start async processor
+	processorDone := make(chan struct{})
+	var logsProcessed, logsDropped uint64
+	go func() {
+		defer close(processorDone)
+		for logs := range logsCh {
+			onNewLogs(logs)
+			logsProcessed++
+		}
+	}()
+
+	// Receive loop - never blocks on handler
+	var recvErr error
 	for {
 		logs, err := subscription.Recv()
 		if errors.Is(err, io.EOF) {
-			log.Info("rpcdaemon: the logs subscription channel was closed")
+			log.Debug("[rpc] [backend] logs subscription channel closed")
 			break
 		}
 		if err != nil {
-			return err
+			recvErr = err
+			break
 		}
-		onNewLogs(logs)
+
+		// Non-blocking send with overflow handling
+		select {
+		case logsCh <- logs:
+		default:
+			// Buffer full - drop oldest log and retry
+			select {
+			case <-logsCh:
+				logsDropped++
+			default:
+			}
+			select {
+			case logsCh <- logs:
+			default:
+				// Still full, drop this log (very rare under extreme contention)
+				logsDropped++
+				if logsDropped == 1 || logsDropped%100 == 0 {
+					log.Warn("[rpc] [backend] logs buffer overflow, dropping logs",
+						"dropped", logsDropped, "bufferSize", logsBufferSize)
+				}
+			}
+		}
 	}
-	return nil
+
+	// Cleanup: close channel and wait for processor to drain
+	close(logsCh)
+	<-processorDone
+
+	log.Debug("[rpc] [backend] logs subscription ended",
+		"processed", logsProcessed, "dropped", logsDropped)
+	if logsDropped > 0 {
+		log.Warn("[rpc] [backend] logs subscription ended with dropped logs",
+			"processed", logsProcessed, "dropped", logsDropped)
+	}
+	return recvErr
 }
 
 func (back *RemoteBackend) TxnLookup(ctx context.Context, tx kv.Getter, txnHash common.Hash) (uint64, uint64, bool, error) {
