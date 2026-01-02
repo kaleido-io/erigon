@@ -61,17 +61,25 @@ func SafeClose(ch chan struct{}) {
 	}
 }
 
-// PrioritizedSend message to channel, but if channel is full (slow consumer) - drop half of old messages (not new)
+// PrioritizedSend message to channel, but if channel is full (slow consumer) - drop half of old messages (not new).
+// This function is non-blocking: if the channel is still full after draining, the message is dropped.
 func PrioritizedSend[t any](ch chan t, msg t) {
 	select {
 	case ch <- msg:
-	default: //if channel is full (slow consumer), drop old messages (not new)
-		for i := 0; i < cap(ch)/2; i++ {
-			select {
-			case <-ch:
-			default:
-			}
+		return
+	default:
+	}
+	// Channel is full, drain up to half of the old messages
+	for i := 0; i < cap(ch)/2; i++ {
+		select {
+		case <-ch:
+		default:
 		}
-		ch <- msg
+	}
+	// Try again, but don't block - if still full, drop the message
+	select {
+	case ch <- msg:
+	default:
+		// Channel still full after draining (concurrent producers), drop this message
 	}
 }

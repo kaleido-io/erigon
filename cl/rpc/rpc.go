@@ -72,6 +72,7 @@ func NewBeaconRpcP2P(ctx context.Context, sentinel sentinelproto.SentinelClient,
 		ethClock:     ethClock,
 	}
 	rpc.columnDataPeers = newColumnPeers(
+		ctx,
 		sentinel,
 		beaconConfig,
 		ethClock,
