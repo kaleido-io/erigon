@@ -34,6 +34,7 @@ func (api *APIImpl) NewPendingTransactionFilter(_ context.Context) (string, erro
 		return "", rpc.ErrNotificationsUnsupported
 	}
 	txsCh, id := api.filters.SubscribePendingTxs(32)
+	api.filters.TrackSubscription(rpchelper.SubscriptionID(id), rpchelper.FilterTypePendingTxs, rpchelper.ProtocolHTTP)
 	go func() {
 		for txs := range txsCh {
 			api.filters.AddPendingTxs(id, txs)
@@ -48,6 +49,7 @@ func (api *APIImpl) NewBlockFilter(_ context.Context) (string, error) {
 		return "", rpc.ErrNotificationsUnsupported
 	}
 	ch, id := api.filters.SubscribeNewHeads(32)
+	api.filters.TrackSubscription(rpchelper.SubscriptionID(id), rpchelper.FilterTypeHeads, rpchelper.ProtocolHTTP)
 	go func() {
 		for block := range ch {
 			api.filters.AddPendingBlock(id, block)
@@ -62,6 +64,7 @@ func (api *APIImpl) NewFilter(_ context.Context, crit filters.FilterCriteria) (s
 		return "", rpc.ErrNotificationsUnsupported
 	}
 	logs, id := api.filters.SubscribeLogs(256, crit)
+	api.filters.TrackSubscription(rpchelper.SubscriptionID(id), rpchelper.FilterTypeLogs, rpchelper.ProtocolHTTP)
 	go func() {
 		for lg := range logs {
 			api.filters.AddLogs(id, lg)
@@ -109,12 +112,14 @@ func (api *APIImpl) GetFilterChanges(_ context.Context, index string) ([]any, er
 
 	// Identify the subscription type by probing each store; if none have data yet, return empty slice
 	if blocks, ok := api.filters.ReadPendingBlocks(rpchelper.HeadsSubID(cutIndex)); ok {
+		api.filters.TouchSubscription(rpchelper.SubscriptionID(cutIndex), rpchelper.FilterTypeHeads)
 		for _, v := range blocks {
 			stub = append(stub, v.Hash())
 		}
 		return stub, nil
 	}
 	if txs, ok := api.filters.ReadPendingTxs(rpchelper.PendingTxsSubID(cutIndex)); ok {
+		api.filters.TouchSubscription(rpchelper.SubscriptionID(cutIndex), rpchelper.FilterTypePendingTxs)
 		if len(txs) > 0 {
 			for _, txn := range txs[0] {
 				stub = append(stub, txn.Hash())
@@ -124,6 +129,7 @@ func (api *APIImpl) GetFilterChanges(_ context.Context, index string) ([]any, er
 		return stub, nil
 	}
 	if logs, ok := api.filters.ReadLogs(rpchelper.LogsSubID(cutIndex)); ok {
+		api.filters.TouchSubscription(rpchelper.SubscriptionID(cutIndex), rpchelper.FilterTypeLogs)
 		for _, v := range logs {
 			stub = append(stub, v)
 		}
@@ -143,6 +149,8 @@ func (api *APIImpl) GetFilterLogs(_ context.Context, index string) ([]*types.Log
 	if found := api.filters.HasSubscription(rpchelper.LogsSubID(cutIndex)); !found {
 		return nil, rpc.ErrFilterNotFound
 	}
+	// Reset the filter deadline since it was just accessed
+	api.filters.TouchSubscription(rpchelper.SubscriptionID(cutIndex), rpchelper.FilterTypeLogs)
 	if logs, ok := api.filters.ReadLogs(rpchelper.LogsSubID(cutIndex)); ok {
 		return logs, nil
 	}
@@ -164,6 +172,7 @@ func (api *APIImpl) NewHeads(ctx context.Context) (*rpc.Subscription, error) {
 	go func() {
 		defer dbg.LogPanic()
 		headers, id := api.filters.SubscribeNewHeads(32)
+		api.filters.SetSubscriptionProtocol(rpchelper.SubscriptionID(id), rpchelper.FilterTypeHeads, rpchelper.ProtocolWS)
 		defer api.filters.UnsubscribeHeads(id)
 		for {
 			select {
@@ -202,6 +211,7 @@ func (api *APIImpl) NewPendingTransactions(ctx context.Context, fullTx *bool) (*
 	go func() {
 		defer dbg.LogPanic()
 		txsCh, id := api.filters.SubscribePendingTxs(256)
+		api.filters.SetSubscriptionProtocol(rpchelper.SubscriptionID(id), rpchelper.FilterTypePendingTxs, rpchelper.ProtocolWS)
 		defer api.filters.UnsubscribePendingTxs(id)
 
 		for {
@@ -249,6 +259,7 @@ func (api *APIImpl) NewPendingTransactionsWithBody(ctx context.Context) (*rpc.Su
 	go func() {
 		defer dbg.LogPanic()
 		txsCh, id := api.filters.SubscribePendingTxs(512)
+		api.filters.SetSubscriptionProtocol(rpchelper.SubscriptionID(id), rpchelper.FilterTypePendingTxs, rpchelper.ProtocolWS)
 		defer api.filters.UnsubscribePendingTxs(id)
 
 		for {
@@ -290,6 +301,7 @@ func (api *APIImpl) Logs(ctx context.Context, crit filters.FilterCriteria) (*rpc
 	go func() {
 		defer dbg.LogPanic()
 		logs, id := api.filters.SubscribeLogs(api.SubscribeLogsChannelSize, crit)
+		api.filters.SetSubscriptionProtocol(rpchelper.SubscriptionID(id), rpchelper.FilterTypeLogs, rpchelper.ProtocolWS)
 		defer api.filters.UnsubscribeLogs(id)
 
 		for {
