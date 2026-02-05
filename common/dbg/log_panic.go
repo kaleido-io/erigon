@@ -29,7 +29,10 @@ import (
 
 // Stack returns stack-trace in logger-friendly compact formatting
 func Stack() string {
-	return stack2.Trace().TrimBelow(stack2.Caller(1)).TrimAbove(stack2.Caller(1)).String()
+	// TODO: The code in main only shows the one line that raised the panic.
+	// We remove the "TrimAbove(stack2.Caller(1))" to show the full stack trace.
+	// return stack2.Trace().TrimBelow(stack2.Caller(1)).TrimAbove(stack2.Caller(1)).String()
+	return stack2.Trace().TrimBelow(stack2.Caller(1)).String()
 }
 func StackSkip(skip int) string {
 	return stack2.Trace().TrimBelow(stack2.Caller(skip)).TrimAbove(stack2.Caller(1)).String()
