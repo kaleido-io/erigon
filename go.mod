@@ -2,7 +2,7 @@ module github.com/erigontech/erigon
 
 go 1.25.0
 
-toolchain go1.25.7
+toolchain go1.25.11
 
 replace github.com/holiman/bloomfilter/v2 => github.com/AskAlexSharov/bloomfilter/v2 v2.0.9
 
